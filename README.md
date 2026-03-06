@@ -1,6 +1,6 @@
 # repo-analyze
 
-A CLI tool that uses the Anthropic Claude API to onboard developers into unfamiliar codebases.
+A CLI tool that uses Claude to onboard developers into unfamiliar codebases.
 
 Given a GitHub URL or local directory, it builds a file tree, analyzes key files with Claude, and writes three Markdown output files:
 
@@ -8,12 +8,26 @@ Given a GitHub URL or local directory, it builds a file tree, analyzes key files
 - `report.md` — executive summary, repo stats, and file tree
 - `CLAUDE.md` — optional AI assistant context file (with `--claude-md`)
 
+## Requirements
+
+You need one of:
+
+- **Claude CLI** — install [Claude Code](https://claude.ai/code) and run `claude` from your terminal _(no API key needed)_
+- **Anthropic API key** — set `ANTHROPIC_API_KEY` in your environment or a `.env` file
+
+If both are present, the API key takes priority. If the API key is invalid, the Claude CLI is used as a fallback.
+
 ## Install
 
 ```bash
 pip install -e .
+```
+
+To use the API key backend, copy `.env.example` to `.env` and add your key:
+
+```bash
 cp .env.example .env
-# Add your ANTHROPIC_API_KEY to .env
+# Edit .env and set ANTHROPIC_API_KEY=your_key_here
 ```
 
 ## Usage
