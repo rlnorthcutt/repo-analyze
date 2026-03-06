@@ -62,8 +62,7 @@ class TestCallClaude:
 
         assert result == "cli response"
         cmd = mock_run.call_args[0][0]
-        assert cmd == ["claude", "-p"]
-        assert mock_run.call_args[1]["input"] == "test prompt"
+        assert cmd == ["claude", "-p", "test prompt"]
 
     def test_cli_strips_claudecode_env_var(self):
         """CLAUDECODE must be absent so claude can run inside a Claude Code session."""
@@ -90,7 +89,8 @@ class TestCallClaude:
                 with patch("repo_analyze.analyzer.subprocess.run", return_value=mock_result) as mock_run:
                     analyzer._call_claude("my specific prompt")
 
-        assert mock_run.call_args[1]["input"] == "my specific prompt"
+        cmd = mock_run.call_args[0][0]
+        assert "my specific prompt" in cmd
 
     def test_raises_when_no_backend_available(self):
         with patch("repo_analyze.analyzer._has_api_key", return_value=False):
