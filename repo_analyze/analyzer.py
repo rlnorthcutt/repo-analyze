@@ -41,7 +41,8 @@ def _call_claude(prompt: str, max_tokens: int = 1024) -> str:
 
     if _has_claude_cli():
         result = subprocess.run(
-            ["claude", "-p", prompt],
+            ["claude", "-p"],
+            input=prompt,
             capture_output=True,
             text=True,
             check=True,

@@ -91,13 +91,22 @@ def should_ignore(path: Path) -> bool:
     return False
 
 
+def is_binary(path: Path) -> bool:
+    """Return True if the file appears to be binary (contains null bytes)."""
+    try:
+        with open(path, "rb") as f:
+            return b"\x00" in f.read(8192)
+    except OSError:
+        return True
+
+
 def build_file_tree(root: Path) -> list[Path]:
-    """Walk root and return all non-ignored files, sorted by path."""
+    """Walk root and return all non-ignored, non-binary files, sorted by path."""
     files = []
     for path in sorted(root.rglob("*")):
         if path.is_file():
             rel = path.relative_to(root)
-            if not should_ignore(rel):
+            if not should_ignore(rel) and not is_binary(path):
                 files.append(path)
     return files
 

@@ -60,10 +60,9 @@ class TestCallClaude:
                     result = analyzer._call_claude("test prompt")
 
         assert result == "cli response"
-        call_args = mock_run.call_args[0][0]
-        assert call_args[0] == "claude"
-        assert "-p" in call_args
-        assert "test prompt" in call_args
+        cmd = mock_run.call_args[0][0]
+        assert cmd == ["claude", "-p"]
+        assert mock_run.call_args[1]["input"] == "test prompt"
 
     def test_cli_receives_exact_prompt(self):
         mock_result = MagicMock()
@@ -74,8 +73,7 @@ class TestCallClaude:
                 with patch("repo_analyze.analyzer.subprocess.run", return_value=mock_result) as mock_run:
                     analyzer._call_claude("my specific prompt")
 
-        cmd = mock_run.call_args[0][0]
-        assert "my specific prompt" in cmd
+        assert mock_run.call_args[1]["input"] == "my specific prompt"
 
     def test_raises_when_no_backend_available(self):
         with patch("repo_analyze.analyzer._has_api_key", return_value=False):

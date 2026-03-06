@@ -6,6 +6,7 @@ import pytest
 
 from repo_analyze.fetcher import (
     should_ignore,
+    is_binary,
     build_file_tree,
     build_tree_str,
     get_repo,
@@ -57,6 +58,34 @@ class TestShouldIgnore:
         assert should_ignore(Path("src/core/engine.py")) is False
 
 
+class TestIsBinary:
+    def test_text_file_is_not_binary(self, tmp_path):
+        f = tmp_path / "main.py"
+        f.write_text("print('hello')", encoding="utf-8")
+        assert is_binary(f) is False
+
+    def test_null_bytes_detected_as_binary(self, tmp_path):
+        f = tmp_path / "compiled"
+        f.write_bytes(b"\x7fELF\x00\x00\x00some binary content")
+        assert is_binary(f) is True
+
+    def test_empty_file_is_not_binary(self, tmp_path):
+        f = tmp_path / "empty.txt"
+        f.write_bytes(b"")
+        assert is_binary(f) is False
+
+    def test_null_byte_within_first_8192_bytes(self, tmp_path):
+        f = tmp_path / "mixed"
+        f.write_bytes(b"text content" + b"\x00" + b"more text")
+        assert is_binary(f) is True
+
+    def test_null_byte_beyond_first_8192_bytes_ignored(self, tmp_path):
+        f = tmp_path / "large_text"
+        # First 8192 bytes are clean text, null appears after
+        f.write_bytes(b"x" * 8192 + b"\x00")
+        assert is_binary(f) is False
+
+
 class TestBuildFileTree:
     def test_returns_list_of_paths(self, tmp_path):
         (tmp_path / "main.py").write_text("print('hello')", encoding="utf-8")
@@ -86,6 +115,16 @@ class TestBuildFileTree:
 
         assert len(files) == 1
         assert files[0].name == "script.py"
+
+    def test_excludes_binary_files_without_extension(self, tmp_path):
+        """Compiled binaries with no extension (e.g. Go/Rust outputs) are excluded."""
+        (tmp_path / "main.go").write_text("package main", encoding="utf-8")
+        (tmp_path / "myapp").write_bytes(b"\x7fELF\x00\x00binary content")
+
+        files = build_file_tree(tmp_path)
+
+        assert len(files) == 1
+        assert files[0].name == "main.go"
 
     def test_returns_absolute_paths(self, tmp_path):
         (tmp_path / "main.py").write_text("x", encoding="utf-8")
