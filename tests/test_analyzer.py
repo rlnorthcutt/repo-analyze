@@ -1,7 +1,9 @@
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import anthropic
 import pytest
 
 from repo_analyze import analyzer
@@ -35,11 +37,125 @@ class TestStripFences:
         assert json.loads(result) == {"a": 1, "b": 2}
 
 
-def _make_mock_response(text: str) -> MagicMock:
-    """Build a mock anthropic response with the given text."""
-    response = MagicMock()
-    response.content = [MagicMock(text=text)]
-    return response
+class TestCallClaude:
+    def test_uses_sdk_when_api_key_set(self):
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="sdk response")]
+
+        with patch("repo_analyze.analyzer._has_api_key", return_value=True):
+            with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
+                MockClient.return_value.messages.create.return_value = mock_response
+                result = analyzer._call_claude("test prompt")
+
+        assert result == "sdk response"
+        MockClient.return_value.messages.create.assert_called_once()
+
+    def test_uses_cli_when_no_api_key_but_cli_available(self):
+        mock_result = MagicMock()
+        mock_result.stdout = "cli response"
+
+        with patch("repo_analyze.analyzer._has_api_key", return_value=False):
+            with patch("repo_analyze.analyzer._has_claude_cli", return_value=True):
+                with patch("repo_analyze.analyzer.subprocess.run", return_value=mock_result) as mock_run:
+                    result = analyzer._call_claude("test prompt")
+
+        assert result == "cli response"
+        call_args = mock_run.call_args[0][0]
+        assert call_args[0] == "claude"
+        assert "-p" in call_args
+        assert "test prompt" in call_args
+
+    def test_cli_receives_exact_prompt(self):
+        mock_result = MagicMock()
+        mock_result.stdout = "response"
+
+        with patch("repo_analyze.analyzer._has_api_key", return_value=False):
+            with patch("repo_analyze.analyzer._has_claude_cli", return_value=True):
+                with patch("repo_analyze.analyzer.subprocess.run", return_value=mock_result) as mock_run:
+                    analyzer._call_claude("my specific prompt")
+
+        cmd = mock_run.call_args[0][0]
+        assert "my specific prompt" in cmd
+
+    def test_raises_when_no_backend_available(self):
+        with patch("repo_analyze.analyzer._has_api_key", return_value=False):
+            with patch("repo_analyze.analyzer._has_claude_cli", return_value=False):
+                with pytest.raises(RuntimeError, match="No Claude backend available"):
+                    analyzer._call_claude("test prompt")
+
+    def test_api_key_takes_priority_over_cli(self):
+        """SDK is used even when CLI is also available, if API key is set."""
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="sdk wins")]
+
+        with patch("repo_analyze.analyzer._has_api_key", return_value=True):
+            with patch("repo_analyze.analyzer._has_claude_cli", return_value=True):
+                with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
+                    with patch("repo_analyze.analyzer.subprocess.run") as mock_run:
+                        MockClient.return_value.messages.create.return_value = mock_response
+                        result = analyzer._call_claude("prompt")
+
+        assert result == "sdk wins"
+        mock_run.assert_not_called()
+
+    def test_sdk_passes_max_tokens(self):
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="response")]
+
+        with patch("repo_analyze.analyzer._has_api_key", return_value=True):
+            with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
+                MockClient.return_value.messages.create.return_value = mock_response
+                analyzer._call_claude("prompt", max_tokens=2048)
+
+        call_kwargs = MockClient.return_value.messages.create.call_args[1]
+        assert call_kwargs["max_tokens"] == 2048
+
+    def test_cli_error_propagates(self):
+        with patch("repo_analyze.analyzer._has_api_key", return_value=False):
+            with patch("repo_analyze.analyzer._has_claude_cli", return_value=True):
+                with patch(
+                    "repo_analyze.analyzer.subprocess.run",
+                    side_effect=subprocess.CalledProcessError(1, "claude"),
+                ):
+                    with pytest.raises(subprocess.CalledProcessError):
+                        analyzer._call_claude("prompt")
+
+    def test_falls_back_to_cli_on_invalid_api_key(self):
+        """An invalid API key (401) should transparently fall back to the Claude CLI."""
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        auth_error = anthropic.AuthenticationError(
+            "invalid x-api-key", response=mock_response, body={}
+        )
+        mock_cli_result = MagicMock()
+        mock_cli_result.stdout = "cli response"
+
+        with patch("repo_analyze.analyzer._has_api_key", return_value=True):
+            with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
+                MockClient.return_value.messages.create.side_effect = auth_error
+                with patch("repo_analyze.analyzer._has_claude_cli", return_value=True):
+                    with patch(
+                        "repo_analyze.analyzer.subprocess.run", return_value=mock_cli_result
+                    ) as mock_run:
+                        result = analyzer._call_claude("prompt")
+
+        assert result == "cli response"
+        mock_run.assert_called_once()
+
+    def test_raises_clear_error_when_key_invalid_and_no_cli(self):
+        """If the API key is invalid and no CLI is available, raise a helpful error."""
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        auth_error = anthropic.AuthenticationError(
+            "invalid x-api-key", response=mock_response, body={}
+        )
+
+        with patch("repo_analyze.analyzer._has_api_key", return_value=True):
+            with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
+                MockClient.return_value.messages.create.side_effect = auth_error
+                with patch("repo_analyze.analyzer._has_claude_cli", return_value=False):
+                    with pytest.raises(RuntimeError, match="authentication failed"):
+                        analyzer._call_claude("prompt")
 
 
 class TestAnalyzeFile:
@@ -54,10 +170,7 @@ class TestAnalyzeFile:
             "suggestions": [],
         }
 
-        with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = _make_mock_response(
-                json.dumps(payload)
-            )
+        with patch("repo_analyze.analyzer._call_claude", return_value=json.dumps(payload)):
             result = analyzer.analyze_file(test_file, tmp_path)
 
         assert result["path"] == "main.py"
@@ -79,10 +192,7 @@ class TestAnalyzeFile:
             "suggestions": [],
         }
 
-        with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = _make_mock_response(
-                json.dumps(payload)
-            )
+        with patch("repo_analyze.analyzer._call_claude", return_value=json.dumps(payload)):
             result = analyzer.analyze_file(test_file, tmp_path)
 
         assert result["path"] == "src/core.py"
@@ -94,8 +204,7 @@ class TestAnalyzeFile:
         payload = {"path": "app.py", "role": "core", "summary": "App.", "suggestions": []}
         fenced = f"```json\n{json.dumps(payload)}\n```"
 
-        with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = _make_mock_response(fenced)
+        with patch("repo_analyze.analyzer._call_claude", return_value=fenced):
             result = analyzer.analyze_file(test_file, tmp_path)
 
         assert result["role"] == "core"
@@ -106,24 +215,17 @@ class TestAnalyzeFile:
 
         payload = {"path": "big.py", "role": "other", "summary": "Big file.", "suggestions": []}
 
-        with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = _make_mock_response(
-                json.dumps(payload)
-            )
+        with patch("repo_analyze.analyzer._call_claude", return_value=json.dumps(payload)) as mock_call:
             analyzer.analyze_file(test_file, tmp_path)
 
-            call_args = MockClient.return_value.messages.create.call_args
-            prompt = call_args[1]["messages"][0]["content"]
-            assert "[truncated]" in prompt
+        prompt_sent = mock_call.call_args[0][0]
+        assert "[truncated]" in prompt_sent
 
     def test_raises_on_invalid_json(self, tmp_path):
         test_file = tmp_path / "app.py"
         test_file.write_text("x = 1", encoding="utf-8")
 
-        with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = _make_mock_response(
-                "not json at all"
-            )
+        with patch("repo_analyze.analyzer._call_claude", return_value="not json at all"):
             with pytest.raises(json.JSONDecodeError):
                 analyzer.analyze_file(test_file, tmp_path)
 
@@ -138,10 +240,7 @@ class TestSelectKeyFiles:
 
         payload = {"files": ["main.py", "README.md"]}
 
-        with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = _make_mock_response(
-                json.dumps(payload)
-            )
+        with patch("repo_analyze.analyzer._call_claude", return_value=json.dumps(payload)):
             result = analyzer.select_key_files(files, tmp_path, "tree")
 
         assert len(result) == 2
@@ -153,10 +252,7 @@ class TestSelectKeyFiles:
         f.write_text("x", encoding="utf-8")
         payload = {"files": ["main.py"]}
 
-        with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = _make_mock_response(
-                json.dumps(payload)
-            )
+        with patch("repo_analyze.analyzer._call_claude", return_value=json.dumps(payload)):
             result = analyzer.select_key_files([f], tmp_path, "tree")
 
         assert all(isinstance(p, Path) for p in result)
@@ -164,38 +260,30 @@ class TestSelectKeyFiles:
     def test_unknown_files_excluded(self, tmp_path):
         f = tmp_path / "main.py"
         f.write_text("x", encoding="utf-8")
-        # Claude returns a file that doesn't exist in our list
         payload = {"files": ["nonexistent.py"]}
 
-        with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = _make_mock_response(
-                json.dumps(payload)
-            )
+        with patch("repo_analyze.analyzer._call_claude", return_value=json.dumps(payload)):
             result = analyzer.select_key_files([f], tmp_path, "tree")
 
         assert result == []
 
-    def test_raises_on_api_error(self, tmp_path):
+    def test_raises_on_backend_error(self, tmp_path):
         f = tmp_path / "main.py"
         f.write_text("x", encoding="utf-8")
 
-        with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.side_effect = RuntimeError("API error")
+        with patch("repo_analyze.analyzer._call_claude", side_effect=RuntimeError("API error")):
             with pytest.raises(RuntimeError):
                 analyzer.select_key_files([f], tmp_path, "tree")
 
 
 class TestGenerateExecutiveSummary:
-    def test_returns_string(self, tmp_path):
+    def test_returns_string(self):
         file_analyses = [
             {"path": "main.py", "role": "entrypoint", "summary": "Entry point.", "suggestions": []}
         ]
         stats = {"total_files": 1, "total_lines": 10, "languages": {"Python": {"files": 1, "lines": 10}}}
 
-        with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = _make_mock_response(
-                "## Overview\n\nThis project does X."
-            )
+        with patch("repo_analyze.analyzer._call_claude", return_value="## Overview\n\nThis project does X."):
             result = analyzer.generate_executive_summary(file_analyses, stats, "tree/")
 
         assert isinstance(result, str)
@@ -204,13 +292,18 @@ class TestGenerateExecutiveSummary:
     def test_empty_analyses(self):
         stats = {"total_files": 0, "total_lines": 0, "languages": {}}
 
-        with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = _make_mock_response(
-                "Empty project."
-            )
+        with patch("repo_analyze.analyzer._call_claude", return_value="Empty project."):
             result = analyzer.generate_executive_summary([], stats, "tree/")
 
         assert isinstance(result, str)
+
+    def test_passes_max_tokens_2048(self):
+        stats = {"total_files": 1, "total_lines": 10, "languages": {}}
+
+        with patch("repo_analyze.analyzer._call_claude", return_value="summary") as mock_call:
+            analyzer.generate_executive_summary([], stats, "tree/")
+
+        assert mock_call.call_args[1]["max_tokens"] == 2048
 
 
 class TestGenerateClaudeMd:
@@ -220,15 +313,12 @@ class TestGenerateClaudeMd:
         ]
         stats = {"total_files": 1, "total_lines": 5, "languages": {}}
 
-        with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = _make_mock_response(
-                "# CLAUDE.md\n\nProject info here."
-            )
+        with patch("repo_analyze.analyzer._call_claude", return_value="# CLAUDE.md\n\nProject info here."):
             result = analyzer.generate_claude_md(file_analyses, stats, "tree/")
 
         assert isinstance(result, str)
 
-    def test_limits_suggestions_sent_to_api(self):
+    def test_limits_suggestions_sent_to_claude(self):
         """Only the first 20 suggestions should be included in the prompt."""
         file_analyses = [
             {
@@ -244,15 +334,17 @@ class TestGenerateClaudeMd:
         ]
         stats = {"total_files": 10, "total_lines": 100, "languages": {}}
 
-        with patch("repo_analyze.analyzer.anthropic.Anthropic") as MockClient:
-            MockClient.return_value.messages.create.return_value = _make_mock_response(
-                "# CLAUDE.md"
-            )
+        with patch("repo_analyze.analyzer._call_claude", return_value="# CLAUDE.md") as mock_call:
             analyzer.generate_claude_md(file_analyses, stats, "tree/")
 
-            call_args = MockClient.return_value.messages.create.call_args
-            prompt = call_args[1]["messages"][0]["content"]
-
-        # Count suggestion lines in the prompt — should be at most 20
-        suggestion_lines = [l for l in prompt.splitlines() if l.startswith("- [")]
+        prompt_sent = mock_call.call_args[0][0]
+        suggestion_lines = [l for l in prompt_sent.splitlines() if l.startswith("- [")]
         assert len(suggestion_lines) <= 20
+
+    def test_passes_max_tokens_4096(self):
+        stats = {"total_files": 1, "total_lines": 5, "languages": {}}
+
+        with patch("repo_analyze.analyzer._call_claude", return_value="# CLAUDE.md") as mock_call:
+            analyzer.generate_claude_md([], stats, "tree/")
+
+        assert mock_call.call_args[1]["max_tokens"] == 4096

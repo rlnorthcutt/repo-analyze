@@ -1,4 +1,7 @@
 import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import anthropic
@@ -10,8 +13,51 @@ MODEL = "claude-opus-4-6"
 MAX_FILE_CHARS = 8_000
 
 
-def _client() -> anthropic.Anthropic:
-    return anthropic.Anthropic()
+def _has_api_key() -> bool:
+    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
+def _has_claude_cli() -> bool:
+    return shutil.which("claude") is not None
+
+
+def _call_claude(prompt: str, max_tokens: int = 1024) -> str:
+    """Call Claude via the SDK (if API key is set) or the Claude CLI as a fallback.
+
+    If ANTHROPIC_API_KEY is set but invalid, falls through to the CLI.
+    Raises RuntimeError if no working backend is found.
+    """
+    if _has_api_key():
+        try:
+            client = anthropic.Anthropic()
+            response = client.messages.create(
+                model=MODEL,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return response.content[0].text
+        except anthropic.AuthenticationError:
+            pass  # key present but invalid — fall through to CLI
+
+    if _has_claude_cli():
+        result = subprocess.run(
+            ["claude", "-p", prompt],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout
+
+    if _has_api_key():
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is set but authentication failed. "
+            "Check that your key is valid, or unset it to use the Claude CLI."
+        )
+    raise RuntimeError(
+        "No Claude backend available. "
+        "Set ANTHROPIC_API_KEY in your environment or .env file, "
+        "or install the Claude CLI (https://claude.ai/code)."
+    )
 
 
 def _strip_fences(text: str) -> str:
@@ -47,13 +93,7 @@ All files:
 Respond with only a raw JSON object, no markdown fences. Example:
 {{"files": ["src/main.py", "README.md", "pyproject.toml"]}}"""
 
-    client = _client()
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = _strip_fences(response.content[0].text)
+    text = _strip_fences(_call_claude(prompt))
     data = json.loads(text)
 
     selected_rel = set(data["files"])
@@ -90,13 +130,7 @@ File: {rel_path}
 
 Respond with only a raw JSON object, no markdown fences."""
 
-    client = _client()
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    text = _strip_fences(response.content[0].text)
+    text = _strip_fences(_call_claude(prompt))
     data = json.loads(text)
     data["path"] = rel_path  # ensure path is canonical
     return data
@@ -137,13 +171,7 @@ File analyses:
 Write in clear prose. Use Markdown headers and bullet points where appropriate.
 Do not include a top-level H1 title — the report wrapper will add one."""
 
-    client = _client()
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.content[0].text.strip()
+    return _call_claude(prompt, max_tokens=2048).strip()
 
 
 def generate_claude_md(file_analyses: list[dict], stats: dict, tree_str: str) -> str:
@@ -183,10 +211,4 @@ Top suggestions from analysis:
 
 Write a complete, well-structured CLAUDE.md. Start with a level-1 heading: # CLAUDE.md"""
 
-    client = _client()
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.content[0].text.strip()
+    return _call_claude(prompt, max_tokens=4096).strip()
