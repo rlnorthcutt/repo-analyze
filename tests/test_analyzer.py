@@ -65,6 +65,21 @@ class TestCallClaude:
         assert cmd == ["claude", "-p"]
         assert mock_run.call_args[1]["input"] == "test prompt"
 
+    def test_cli_strips_claudecode_env_var(self):
+        """CLAUDECODE must be absent so claude can run inside a Claude Code session."""
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = "response"
+
+        with patch("repo_analyze.analyzer._has_api_key", return_value=False):
+            with patch("repo_analyze.analyzer._has_claude_cli", return_value=True):
+                with patch.dict("os.environ", {"CLAUDECODE": "1"}):
+                    with patch("repo_analyze.analyzer.subprocess.run", return_value=mock_result) as mock_run:
+                        analyzer._call_claude("prompt")
+
+        env_passed = mock_run.call_args[1]["env"]
+        assert "CLAUDECODE" not in env_passed
+
     def test_cli_receives_exact_prompt(self):
         mock_result = MagicMock()
         mock_result.returncode = 0

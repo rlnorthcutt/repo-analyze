@@ -40,11 +40,15 @@ def _call_claude(prompt: str, max_tokens: int = 1024) -> str:
             pass  # key present but invalid — fall through to CLI
 
     if _has_claude_cli():
+        # Strip CLAUDECODE so nested invocations work when run inside a Claude Code session.
+        env = os.environ.copy()
+        env.pop("CLAUDECODE", None)
         result = subprocess.run(
             ["claude", "-p"],
             input=prompt,
             capture_output=True,
             text=True,
+            env=env,
         )
         if result.returncode != 0:
             detail = result.stderr.strip() or f"exit status {result.returncode}"
