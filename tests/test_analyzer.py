@@ -52,6 +52,7 @@ class TestCallClaude:
 
     def test_uses_cli_when_no_api_key_but_cli_available(self):
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stdout = "cli response"
 
         with patch("repo_analyze.analyzer._has_api_key", return_value=False):
@@ -66,6 +67,7 @@ class TestCallClaude:
 
     def test_cli_receives_exact_prompt(self):
         mock_result = MagicMock()
+        mock_result.returncode = 0
         mock_result.stdout = "response"
 
         with patch("repo_analyze.analyzer._has_api_key", return_value=False):
@@ -108,14 +110,16 @@ class TestCallClaude:
         call_kwargs = MockClient.return_value.messages.create.call_args[1]
         assert call_kwargs["max_tokens"] == 2048
 
-    def test_cli_error_propagates(self):
+    def test_cli_error_includes_stderr(self):
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = "unknown flag: -p"
+        mock_result.stdout = ""
+
         with patch("repo_analyze.analyzer._has_api_key", return_value=False):
             with patch("repo_analyze.analyzer._has_claude_cli", return_value=True):
-                with patch(
-                    "repo_analyze.analyzer.subprocess.run",
-                    side_effect=subprocess.CalledProcessError(1, "claude"),
-                ):
-                    with pytest.raises(subprocess.CalledProcessError):
+                with patch("repo_analyze.analyzer.subprocess.run", return_value=mock_result):
+                    with pytest.raises(RuntimeError, match="unknown flag: -p"):
                         analyzer._call_claude("prompt")
 
     def test_falls_back_to_cli_on_invalid_api_key(self):
@@ -126,6 +130,7 @@ class TestCallClaude:
             "invalid x-api-key", response=mock_response, body={}
         )
         mock_cli_result = MagicMock()
+        mock_cli_result.returncode = 0
         mock_cli_result.stdout = "cli response"
 
         with patch("repo_analyze.analyzer._has_api_key", return_value=True):

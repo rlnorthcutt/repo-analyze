@@ -45,8 +45,10 @@ def _call_claude(prompt: str, max_tokens: int = 1024) -> str:
             input=prompt,
             capture_output=True,
             text=True,
-            check=True,
         )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or f"exit status {result.returncode}"
+            raise RuntimeError(f"Claude CLI failed: {detail}")
         return result.stdout
 
     if _has_api_key():
