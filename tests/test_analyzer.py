@@ -62,7 +62,7 @@ class TestCallClaude:
 
         assert result == "cli response"
         cmd = mock_run.call_args[0][0]
-        assert cmd == ["claude", "-p", "test prompt"]
+        assert cmd == ["claude", "-p", "--no-session-persistence", "test prompt"]
 
     def test_cli_strips_claudecode_env_var(self):
         """CLAUDECODE must be absent so claude can run inside a Claude Code session."""

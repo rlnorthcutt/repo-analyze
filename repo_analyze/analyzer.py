@@ -44,7 +44,7 @@ def _call_claude(prompt: str, max_tokens: int = 1024) -> str:
         env = os.environ.copy()
         env.pop("CLAUDECODE", None)
         result = subprocess.run(
-            ["claude", "-p", prompt],
+            ["claude", "-p", "--no-session-persistence", prompt],
             capture_output=True,
             text=True,
             env=env,
