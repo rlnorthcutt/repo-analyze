@@ -98,14 +98,17 @@ def format_stats_section(stats: dict) -> str:
 
     sorted_langs = sorted(languages.items(), key=lambda x: x[1]["lines"], reverse=True)
 
+    total_lines = stats.get("total_lines", 0)
+
     lines = [
         f"- **Total files:** {stats['total_files']}",
         f"- **Total lines:** {stats['total_lines']}",
         "",
-        "| Language | Files | Lines |",
-        "|----------|------:|------:|",
+        "| Language | Files | Lines | % |",
+        "|----------|------:|------:|--:|",
     ]
     for lang, counts in sorted_langs:
-        lines.append(f"| {lang} | {counts['files']} | {counts['lines']} |")
+        pct = f"{counts['lines'] / total_lines * 100:.1f}%" if total_lines else "0.0%"
+        lines.append(f"| {lang} | {counts['files']} | {counts['lines']} | {pct} |")
 
     return "\n".join(lines)

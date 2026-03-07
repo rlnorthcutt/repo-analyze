@@ -2,11 +2,11 @@
 
 A CLI tool that uses Claude to onboard developers into unfamiliar codebases.
 
-Given a GitHub URL or local directory, it builds a file tree, analyzes key files with Claude, and writes three Markdown output files:
+Given a GitHub URL or local directory, it builds a file tree, analyzes key files with Claude, and writes up to three Markdown output files:
 
-- `file_summaries.md` — per-file role, summary, and suggestions
-- `report.md` — executive summary, repo stats, and file tree
-- `CLAUDE.md` — optional AI assistant context file (with `--claude-md`)
+- `ONBOARDING.md` — executive summary, repo stats, documentation library, and file tree
+- `ANALYSIS.md` — per-file role, summary, and improvement suggestions
+- `CLAUDE.md` — AI assistant context file for use with Claude Code
 
 ## Requirements
 
@@ -33,18 +33,37 @@ cp .env.example .env
 ## Usage
 
 ```bash
-# Partial mode (default) — Claude picks the most important files
+# Default: analyze key files, generate all three reports, output to current dir
 repo-analyze https://github.com/owner/repo
 
-# Full mode — analyze every file
-repo-analyze ./local/project --full
+# All flags explicit
+repo-analyze https://github.com/owner/repo \
+  --full \
+  --reports onboarding,improvement,claude \
+  --output ./output
 
-# Generate a CLAUDE.md for the analyzed repo
-repo-analyze https://github.com/owner/repo --claude-md
+# Local path, full scan, only the onboarding guide
+repo-analyze ./my-local-project \
+  --full \
+  --reports onboarding \
+  --output ./docs
 
-# Custom output directory
-repo-analyze https://github.com/owner/repo -o ./output
+# Quick CLAUDE.md only (partial file selection, default output dir)
+repo-analyze https://github.com/owner/repo --reports claude
+
+# Improvement report + CLAUDE.md, custom output
+repo-analyze ./my-local-project --reports improvement,claude -o ./analysis
 ```
+
+## Flags
+
+| Flag | Values | Default | Description |
+|------|--------|---------|-------------|
+| `source` | URL or path | *(prompted)* | GitHub URL or local directory |
+| `--full` | boolean | off | Analyze every file instead of Claude-selected subset |
+| `--reports` | `onboarding`, `improvement`, `claude`, `all` | `all` | Which output files to generate (comma-separated) |
+| `-o` / `--output` | path | `.` | Directory to write output files into |
+| `--non-interactive` | boolean | off | Skip all prompts; use defaults for unset flags (for CI/scripts) |
 
 ## Development
 

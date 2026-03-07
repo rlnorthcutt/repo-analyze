@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from repo_analyze import reporter
+from repo_analyze.reporter import _guess_md_purpose, _build_md_library
 
 
 SAMPLE_ANALYSES = [
@@ -42,7 +43,7 @@ class TestWriteFileSummaries:
     def test_creates_file(self, tmp_path):
         path = reporter.write_file_summaries(SAMPLE_ANALYSES, tmp_path)
         assert path.exists()
-        assert path.name == "file_summaries.md"
+        assert path.name == "ANALYSIS.md"
 
     def test_returns_path_object(self, tmp_path):
         path = reporter.write_file_summaries(SAMPLE_ANALYSES, tmp_path)
@@ -120,7 +121,7 @@ class TestWriteReport:
     def test_creates_file(self, tmp_path):
         path = reporter.write_report("Summary text.", SAMPLE_STATS, "root/\n└── main.py", tmp_path)
         assert path.exists()
-        assert path.name == "report.md"
+        assert path.name == "ONBOARDING.md"
 
     def test_returns_path_object(self, tmp_path):
         path = reporter.write_report("Summary.", SAMPLE_STATS, "tree", tmp_path)
@@ -158,6 +159,98 @@ class TestWriteReport:
         stats = {"total_files": 0, "total_lines": 0, "languages": {}}
         path = reporter.write_report("Summary.", stats, "tree", tmp_path)
         assert path.exists()
+
+
+class TestGuessMdPurpose:
+    def test_readme(self):
+        assert "overview" in _guess_md_purpose("README.md").lower()
+
+    def test_changelog(self):
+        assert "changelog" in _guess_md_purpose("CHANGELOG.md").lower()
+
+    def test_contributing(self):
+        assert "contribution" in _guess_md_purpose("CONTRIBUTING.md").lower()
+
+    def test_claude(self):
+        assert "ai" in _guess_md_purpose("CLAUDE.md").lower()
+
+    def test_case_insensitive_stem(self):
+        assert "overview" in _guess_md_purpose("readme.md").lower()
+
+    def test_hyphen_in_name(self):
+        assert "getting started" in _guess_md_purpose("getting-started.md").lower()
+
+    def test_nested_path(self):
+        result = _guess_md_purpose("docs/API.md")
+        assert "api" in result.lower() or "documentation" in result.lower()
+
+    def test_unknown_file_in_docs_dir(self):
+        assert "documentation" in _guess_md_purpose("docs/random.md").lower()
+
+    def test_unknown_file_defaults_to_documentation(self):
+        assert "documentation" in _guess_md_purpose("unknown-file.md").lower()
+
+    def test_partial_match(self):
+        # CHANGELOG contains "CHANGE" but stem is "CHANGELOG" — exact match wins
+        assert "changelog" in _guess_md_purpose("CHANGELOG.md").lower()
+
+
+class TestBuildMdLibrary:
+    def test_empty_returns_empty_string(self):
+        assert _build_md_library([]) == ""
+
+    def test_includes_file_path(self):
+        result = _build_md_library(["README.md"])
+        assert "README.md" in result
+
+    def test_includes_purpose_guess(self):
+        result = _build_md_library(["README.md"])
+        assert "overview" in result.lower()
+
+    def test_includes_section_heading(self):
+        result = _build_md_library(["README.md"])
+        assert "## Documentation Library" in result
+
+    def test_multiple_files_sorted(self):
+        result = _build_md_library(["README.md", "CHANGELOG.md", "CONTRIBUTING.md"])
+        changelog_pos = result.index("CHANGELOG")
+        contributing_pos = result.index("CONTRIBUTING")
+        readme_pos = result.index("README")
+        # Sorted alphabetically: CHANGELOG < CONTRIBUTING < README
+        assert changelog_pos < contributing_pos < readme_pos
+
+
+class TestWriteReportExtended:
+    def test_includes_repo_name_in_heading(self, tmp_path):
+        path = reporter.write_report("Summary.", SAMPLE_STATS, "tree", tmp_path, repo_name="my-project")
+        content = path.read_text(encoding="utf-8")
+        assert "my-project" in content
+
+    def test_heading_format(self, tmp_path):
+        path = reporter.write_report("Summary.", SAMPLE_STATS, "tree", tmp_path, repo_name="myrepo")
+        content = path.read_text(encoding="utf-8")
+        assert "# myrepo" in content
+
+    def test_md_library_included_before_file_tree(self, tmp_path):
+        path = reporter.write_report(
+            "Summary.", SAMPLE_STATS, "tree", tmp_path,
+            md_files=["README.md", "CHANGELOG.md"],
+        )
+        content = path.read_text(encoding="utf-8")
+        assert "Documentation Library" in content
+        lib_pos = content.index("Documentation Library")
+        tree_pos = content.index("File Tree")
+        assert lib_pos < tree_pos
+
+    def test_no_md_files_omits_library(self, tmp_path):
+        path = reporter.write_report("Summary.", SAMPLE_STATS, "tree", tmp_path, md_files=[])
+        content = path.read_text(encoding="utf-8")
+        assert "Documentation Library" not in content
+
+    def test_default_repo_name(self, tmp_path):
+        path = reporter.write_report("Summary.", SAMPLE_STATS, "tree", tmp_path)
+        content = path.read_text(encoding="utf-8")
+        assert "# Repository" in content
 
 
 class TestWriteClaudeMd:

@@ -147,3 +147,20 @@ class TestFormatStatsSection:
         python_pos = result.index("Python")
         js_pos = result.index("JavaScript")
         assert python_pos < js_pos  # Python (more lines) comes first
+
+    def test_includes_percentage_column(self, tmp_path):
+        f = tmp_path / "main.py"
+        f.write_text("a\nb\nc\nd", encoding="utf-8")
+        stats = compute_stats([f], tmp_path)
+        result = format_stats_section(stats)
+        assert "100.0%" in result
+
+    def test_percentage_sums_correctly(self, tmp_path):
+        py = tmp_path / "a.py"
+        py.write_text("a\nb\nc", encoding="utf-8")  # 3 lines
+        js = tmp_path / "b.js"
+        js.write_text("x\ny", encoding="utf-8")  # 2 lines — total 5
+        stats = compute_stats([py, js], tmp_path)
+        result = format_stats_section(stats)
+        assert "60.0%" in result  # Python: 3/5
+        assert "40.0%" in result  # JS: 2/5
